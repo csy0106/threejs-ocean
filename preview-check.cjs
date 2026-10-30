@@ -1,0 +1,23 @@
+const { chromium, launchOptions } = require('./test-browser.cjs');
+const fs = require('node:fs');
+(async()=>{
+  const browser=await chromium.launch(launchOptions);
+  const page=await browser.newPage({viewport:{width:1600,height:1000},deviceScaleFactor:1});
+  const errors=[];
+  page.on('pageerror',e=>errors.push(e.message));
+  page.on('console',m=>{if(m.type()==='error')errors.push(m.text());});
+  await page.goto('http://127.0.0.1:4173');
+  await page.waitForFunction(()=>window.oceanDemo?.getState().ready,{},{timeout:60000});
+  await page.waitForTimeout(2500);
+  await page.evaluate(()=>{oceanDemo.pause();oceanDemo.setTime(8);});
+  await page.screenshot({path:'output/preview-coast.png'});
+  console.log(JSON.stringify({errors,state:await page.evaluate(()=>oceanDemo.getState()),fps:await page.locator('#fps').textContent()},null,2));
+  await page.evaluate(()=>oceanDemo.setView('shallow',true));
+  await page.waitForTimeout(600);
+  await page.screenshot({path:'output/preview-shallow.png'});
+  await page.evaluate(()=>oceanDemo.setView('overhead',true));
+  await page.waitForTimeout(600);
+  await page.screenshot({path:'output/preview-overhead.png'});
+  fs.writeFileSync('output/initial-check.json',JSON.stringify({errors},null,2));
+  await browser.close();
+})().catch(e=>{console.error(e);process.exit(1)});

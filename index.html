@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#dce9ed" />
+  <title>PELAGIC · 海面实验室</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 40 40'%3E%3Crect width='40' height='40' rx='12' fill='%23153649'/%3E%3Cpath d='M7 16q6-7 13 0t13 0M7 24q6-7 13 0t13 0' stroke='%23cde8e5' stroke-width='2' fill='none'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="./src/style.css" />
+  <script type="importmap">{"imports":{"three":"./vendor/three.module.js"}}</script>
+</head>
+<body>
+  <canvas id="ocean" aria-label="可交互的三维海面：拖动旋转，滚轮缩放"></canvas>
+  <div id="loading"><span class="loading-wave">≈</span><p>正在唤醒海洋</p><small>光线、波浪，与此刻的海风</small></div>
+  <header class="topbar">
+    <a class="brand" href="./" aria-label="海面实验室首页"><span class="brand-mark">≈</span><span>PELAGIC<small>海 面 实 验 室</small></span></a>
+    <div class="top-actions"><span class="live"><i></i> 实时海洋</span><button id="pause" class="icon-button" title="暂停 / 播放（空格）" aria-label="暂停动画"><svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></svg></button><button id="capture" class="icon-button" title="保存画面" aria-label="保存画面"><svg viewBox="0 0 24 24"><path d="M4 8h4l2-3h4l2 3h4v12H4z"/><circle cx="12" cy="13" r="3"/></svg></button><button id="toggle-panel" class="icon-button" title="显示 / 隐藏参数（H）" aria-label="切换参数面板" aria-expanded="true"><svg viewBox="0 0 24 24"><path d="M5 4v16M12 4v16M19 4v16M2 8h6M9 16h6M16 10h6"/></svg></button></div>
+  </header>
+  <aside class="panel" id="panel" aria-label="海面参数">
+    <div class="panel-heading"><span class="eyebrow">OCEAN PARAMETERS</span><span class="panel-number">01 / 03</span></div>
+    <h1>一片有呼吸的海。</h1><p class="panel-intro">从海风掠过，到光落在沙底。</p>
+    <div class="presets" role="group" aria-label="海况"><button class="active" data-preset="coast">清澈浅海</button><button data-preset="breeze">海风起伏</button><button data-preset="golden">落日余晖</button></div>
+    <section><div class="section-label"><span>01</span> 波浪与海风</div>
+      <label class="control" for="wave"><span>波浪强度</span><output id="wave-value">0.65</output><input id="wave" type="range" min="0.15" max="1.5" step="0.01" value="0.65" /></label>
+      <label class="control" for="speed"><span>流动速度</span><output id="speed-value">1.00 ×</output><input id="speed" type="range" min="0.15" max="1.8" step="0.01" value="1" /></label>
+    </section>
+    <section><div class="section-label"><span>02</span> 浅水与光线</div>
+      <label class="control" for="depth"><span>近岸水深</span><output id="depth-value">1.20 m</output><input id="depth" type="range" min="0.45" max="4" step="0.05" value="1.2" /></label>
+      <label class="control" for="clarity"><span>水体清澈度</span><output id="clarity-value">82%</output><input id="clarity" type="range" min="0.15" max="1" step="0.01" value="0.82" /></label>
+      <label class="control" for="caustics"><span>焦散强度</span><output id="caustics-value">1.10</output><input id="caustics" type="range" min="0" max="2.5" step="0.01" value="1.1" /></label>
+      <label class="control" for="sun"><span>太阳高度</span><output id="sun-value">48°</output><input id="sun" type="range" min="8" max="80" step="1" value="48" /></label>
+    </section>
+    <div class="panel-bottom"><label class="switch-label" for="foam"><input id="foam" type="checkbox" checked/><span class="switch"></span>浪尖微沫</label><button id="reset" class="text-button">重置 ↺</button></div>
+    <div class="quality"><span><i></i><b id="fps">—</b> FPS</span><label for="quality">画质 <select id="quality"><option value="high">精细</option><option value="balanced" selected>均衡</option><option value="low">轻量</option></select></label></div>
+  </aside>
+  <footer class="footer"><div class="scene-caption"><div class="eyebrow">A STUDY OF LIGHT & WATER</div><h2 id="view-title">风有形，光有迹。</h2><p id="view-description">远处是蔚蓝，脚下是流动的光。</p></div>
+    <nav class="views" aria-label="观察视角"><button class="active" data-view="coast"><span>01</span> 海面</button><button data-view="shallow"><span>02</span> 浅水焦散</button><button data-view="overhead"><span>03</span> 俯瞰</button></nav>
+    <div class="interaction-hint"><span>拖动旋转 · 滚轮缩放</span><span>H 隐藏面板 · 空格暂停</span></div>
+  </footer>
+  <div id="toast" role="status"></div>
+  <script type="module" src="./src/main.js"></script>
+</body>
+</html>
