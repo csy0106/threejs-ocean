@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "start": "node server.mjs",
-    "check": "node --check src/main.js && node --check src/shaders.js && node --check src/caustics.js && node --check src/wave-spectrum.js && node --check server.mjs",
+    "check": "node --check src/main.js && node --check src/shaders.js && node --check src/caustics.js && node --check src/wave-spectrum.js && node --check src/foam.js && node --check server.mjs",
     "test:browser": "node verify.cjs",
     "test:zoom": "node zoom-check.cjs"
   },

@@ -42,6 +42,23 @@ const assert=require('node:assert/strict');
   await page.evaluate(()=>oceanDemo.setTime(8));
   await page.waitForTimeout(2600);
   await page.screenshot({path:'output/preview-coast.png'});
+  // Compare the same paused frame through the real checkbox event path. A
+  // connected uniform alone is insufficient: default seas must show foam.
+  const foamCheck=await page.evaluate(async()=>{
+    const box=document.querySelector('#foam'),app=oceanDemo;
+    // Warm up the persistent history, ending at the same diagnostic time.
+    app.setTime(6.5);
+    for(let i=1;i<=60;i++){app.setTime(6.5+i*.025);if(i%10===0)await new Promise(resolve=>setTimeout(resolve,0));}
+    const capture=()=>{app.render();const gl=app.renderer.getContext(),data=new Uint8Array(gl.drawingBufferWidth*gl.drawingBufferHeight*4);gl.readPixels(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight,gl.RGBA,gl.UNSIGNED_BYTE,data);return data;};
+    const set=enabled=>{if(box.checked!==enabled)box.click();};
+    set(false);const off=capture();set(true);const on=capture();set(false);const restored=capture();set(true);
+    let visible=0;const count=Math.floor(off.length/4*.75);
+    for(let p=0;p<count;p++){const i=p*4;if(Math.max(Math.abs(off[i]-on[i]),Math.abs(off[i+1]-on[i+1]),Math.abs(off[i+2]-on[i+2]))>=8)visible++;}
+    return {visibleRatio:visible/count,restored:off.every((v,i)=>v===restored[i])};
+  });
+  assert.ok(foamCheck.visibleRatio>.001&&foamCheck.visibleRatio<.04,'Default wave strength should produce sparse, visible crest foam');
+  assert.ok(foamCheck.restored,'Switching foam off must restore the original water pixels');
+  checks.push('Default-strength crest foam visibly toggles and restores the same frame');
   await page.locator('[data-view="shallow"]').click();
   await page.waitForTimeout(1600);
   assert.equal(await page.evaluate(()=>oceanDemo.getState().currentView),'shallow');

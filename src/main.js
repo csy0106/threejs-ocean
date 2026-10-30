@@ -3,6 +3,7 @@ import { OrbitControls } from '../vendor/OrbitControls.js';
 import { waterVertex, waterFragment, skyVertex, skyFragment } from './shaders.js';
 import { createWaveSpectrum } from './wave-spectrum.js';
 import { createAdaptiveCaustics } from './caustics.js';
+import { createFoamSimulation } from './foam.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('ocean');
@@ -45,6 +46,7 @@ function setSun(degrees){
 }
 setSun(48);
 const waveSpectrum=createWaveSpectrum(renderer,uniforms);
+const foamSimulation=createFoamSimulation(renderer,uniforms);
 const caustics=createAdaptiveCaustics(renderer,camera,uniforms);
 
 const sky = new THREE.Mesh(new THREE.SphereGeometry(1,32,16),new THREE.ShaderMaterial({
@@ -80,6 +82,7 @@ function setQuality(level){
   quality=level;
   const q=qualityOptions[level];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio,q.pixelRatio));
+  foamSimulation.setQuality(level);
   caustics.setQuality(q);
   resize();
 }
@@ -179,6 +182,7 @@ renderer.debug.onShaderError=(gl,program,vertex,fragment)=>{
 };
 function render(){
   waveSpectrum.update();
+  foamSimulation.update();
   caustics.render();
   renderer.setRenderTarget(null);
   renderer.setClearColor(0x90bbd2,1);
@@ -208,9 +212,9 @@ requestAnimationFrame(animate);
 
 // Local diagnostics for reproducible browser checks and still captures.
 window.oceanDemo={
-  renderer,scene,camera,controls,uniforms,
+  renderer,scene,camera,controls,uniforms,foamSimulation,
   setView,setQuality,applyPreset,render,
-  getState:()=>({paused,quality,currentView,time:uniforms.uTime.value,shaderError,ready,triangles:renderer.info.render.triangles,caustics:caustics.getState()}),
+  getState:()=>({paused,quality,currentView,time:uniforms.uTime.value,shaderError,ready,triangles:renderer.info.render.triangles,caustics:caustics.getState(),foam:foamSimulation.getState()}),
   setTime(t){uniforms.uTime.value=t;render();},
   pause(){if(!paused)togglePause();}
 };

@@ -123,6 +123,7 @@ export const waterFragment = /* glsl */`
 ${common}
 uniform sampler2D uCausticMap;
 uniform sampler2D uCausticFarMap;
+uniform sampler2D uFoamMap;
 uniform vec4 uCausticNearRect;
 uniform vec4 uCausticFarRect;
 varying vec3 vWorld;
@@ -187,13 +188,21 @@ void main() {
   float Gl=2.0*NoL/max(NoL+sqrt(a2+(1.0-a2)*NoL*NoL),0.0001);
   float spec=min(70.0,D*specF*Gv*Gl/max(4.0*NoV,0.02));
   color+=sunTint*spec*2.5;
-  vec2 foamFlow=vWorld.xz+vec2(-uTime*0.13,uTime*0.07);
-  float bubbles=simplexNoise(foamFlow*22.0)*0.65+simplexNoise(foamFlow*47.0+31.7)*0.35;
-  float crestRidge=smoothstep(0.38,0.73,compression)*smoothstep(0.22,0.55,crest);
-  float breakup=smoothstep(0.35,0.7,simplexNoise(foamFlow*1.7));
-  float foam=crestRidge*breakup*smoothstep(0.46,0.65,bubbles)*smoothstep(0.55,1.25,uWave);
-  foam*=uFoam*(1.0-smoothstep(12.0,85.0,distanceToCamera));
-  color=mix(color,mix(vec3(0.77,0.85,0.84),sunTint*0.88,0.3),foam*0.65);
+  vec2 history=texture2D(uFoamMap,vParam/64.0+0.5).rg;
+  vec2 foamFlow=vParam-vec2(0.035,0.075)*uTime;
+  vec2 wind=normalize(vec2(0.38,0.92)),across=vec2(wind.y,-wind.x);
+  // Soft, stretched filaments modulate density; no thresholded white dots.
+  vec2 strands=vec2(dot(foamFlow,across)*4.0,dot(foamFlow,wind)*15.0);
+  float lace=simplexNoise(strands)*0.65+simplexNoise(foamFlow*31.0)*0.35;
+  lace=mix(lace,0.5,smoothstep(0.01,0.09,footprint));
+  float detail=mix(0.12,1.55,smoothstep(0.26,0.74,lace));
+  float density=(max(history.r-0.012,0.0)+history.g*0.25)*detail;
+  float foam=(1.0-exp(-density*1.4))*uFoam*(1.0-smoothstep(35.0,140.0,distanceToCamera));
+  vec3 foamNormal=normalize(mix(vec3(0,1,0),n,0.45));
+  vec3 foamLight=vec3(0.60,0.65,0.63)*(0.34+0.66*max(dot(foamNormal,uSun),0.0))*mix(vec3(1.0),sunTint,0.6);
+  float freshness=history.r/max(history.r+history.g,0.001);
+  vec3 foamColor=mix(mix(refracted,foamLight,0.55),foamLight,freshness);
+  color=mix(color,foamColor,foam);
   float haze=1.0-exp(-distanceToCamera*0.0003);
   color=mix(color,skyColor(normalize(vec3(-viewDir.x,0.012,-viewDir.z)),false),haze);
   gl_FragColor=vec4(color,1.0);
