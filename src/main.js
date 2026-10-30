@@ -4,14 +4,16 @@ import { waterVertex, waterFragment, skyVertex, skyFragment } from './shaders.js
 import { createWaveSpectrum } from './wave-spectrum.js';
 import { createAdaptiveCaustics } from './caustics.js';
 import { createFoamSimulation } from './foam.js';
+import { surfaceHeightAt } from './wave-model.js';
 
 const $ = id => document.getElementById(id);
 const canvas = $('ocean');
 let renderer;
 try {
   renderer = new THREE.WebGLRenderer({canvas, antialias: true, powerPreference:'high-performance', preserveDrawingBuffer:true});
+  if(!renderer.extensions.has('EXT_color_buffer_float'))throw new Error('Floating-point render targets are unavailable');
 } catch(error) {
-  $('loading').innerHTML='<p>当前浏览器无法启动 WebGL 2</p><small>请开启浏览器硬件加速，使用新版 Chrome 或 Edge。</small>';
+  $('loading').innerHTML='<p>当前设备无法启动海面渲染</p><small>需要 WebGL 2 与浮点渲染目标支持，请开启浏览器硬件加速。</small>';
   throw error;
 }
 renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -76,9 +78,11 @@ const water=new THREE.Mesh(oceanGeometry(512),new THREE.ShaderMaterial({
 water.frustumCulled=false;
 scene.add(water);
 
-let quality='balanced';
+let quality=null,needsRender=true,contextLost=false,renderCount=0;
 const qualityOptions={high:{pixelRatio:1.6,map:2048,grid:760},balanced:{pixelRatio:1.1,map:1536,grid:600},low:{pixelRatio:0.75,map:768,grid:380}};
 function setQuality(level){
+  if(!Object.hasOwn(qualityOptions,level))throw new RangeError('Unknown quality: '+level);
+  if(quality===level)return;
   quality=level;
   const q=qualityOptions[level];
   renderer.setPixelRatio(Math.min(window.devicePixelRatio,q.pixelRatio));
@@ -90,6 +94,7 @@ function resize(){
   renderer.setSize(window.innerWidth,window.innerHeight);
   camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
+  needsRender=true;
 }
 setQuality('balanced');
 window.addEventListener('resize',resize);
@@ -99,6 +104,7 @@ const bindings={wave:'uWave',depth:'uDepth',clarity:'uClarity',caustics:'uCausti
 let speed=1, paused=false, transition=null, ready=false;
 const format={wave:v=>v.toFixed(2),speed:v=>v.toFixed(2)+' ×',depth:v=>v.toFixed(2)+' m',clarity:v=>Math.round(v*100)+'%',caustics:v=>v.toFixed(2),sun:v=>Math.round(v)+'°'};
 function updateControl(id,value){
+  needsRender=true;
   const el=$(id);
   el.value=value;
   const v=Number(el.value);
@@ -115,7 +121,7 @@ for(const id of Object.keys(format)){
     document.querySelectorAll('[data-preset]').forEach(el=>el.classList.remove('active'));
   });
 }
-$('foam').addEventListener('change',e=>uniforms.uFoam.value=e.target.checked?1:0);
+$('foam').addEventListener('change',e=>{uniforms.uFoam.value=e.target.checked?1:0;needsRender=true;});
 const presets={
   coast:{wave:0.65,speed:1,depth:1.2,clarity:0.82,caustics:1.1,sun:48},
   breeze:{wave:1.22,speed:1.15,depth:1.8,clarity:0.72,caustics:0.85,sun:38},
@@ -133,6 +139,8 @@ const views={
 };
 let currentView='coast';
 function setView(name,instant=false){
+  if(!Object.hasOwn(views,name))throw new RangeError('Unknown view: '+name);
+  needsRender=true;
   currentView=name;
   const v=views[name];
   transition={start:performance.now(),from:camera.position.clone(),fromTarget:controls.target.clone(),to:new THREE.Vector3(...v.pos),toTarget:new THREE.Vector3(...v.target)};
@@ -144,16 +152,31 @@ function setView(name,instant=false){
 }
 document.querySelectorAll('[data-view]').forEach(el=>el.addEventListener('click',()=>setView(el.dataset.view)));
 controls.addEventListener('start',()=>transition=null);
+controls.addEventListener('change',()=>needsRender=true);
 function togglePause(){
   paused=!paused;
+  needsRender=true;
+  if(paused)$('fps').textContent='—';
   $('pause').setAttribute('aria-label',paused?'播放动画':'暂停动画');
   $('pause').innerHTML=paused?'<svg viewBox="0 0 24 24"><path d="m9 5 10 7-10 7z"/></svg>':'<svg viewBox="0 0 24 24"><path d="M9 6v12M15 6v12"/></svg>';
   document.querySelector('.live').innerHTML=paused?'<i style="background:#a99a6c"></i> 时间已暂停':'<i></i> 实时海洋';
 }
 $('pause').addEventListener('click',togglePause);
+function syncInterface(){
+  const immersive=document.body.classList.contains('ui-hidden');
+  const panelHidden=immersive||$('panel').classList.contains('hidden');
+  $('panel').inert=panelHidden;
+  $('panel').setAttribute('aria-hidden',String(panelHidden));
+  $('toggle-panel').setAttribute('aria-expanded',String(!panelHidden));
+  for(const selector of ['.footer','.brand','.live']){
+    const element=document.querySelector(selector);element.inert=immersive;element.setAttribute('aria-hidden',String(immersive));
+  }
+}
 $('toggle-panel').addEventListener('click',()=>{
-  const hidden=$('panel').classList.toggle('hidden');
-  $('toggle-panel').setAttribute('aria-expanded',String(!hidden));
+  if(document.body.classList.contains('ui-hidden')){
+    document.body.classList.remove('ui-hidden');$('panel').classList.remove('hidden');
+  }else $('panel').classList.toggle('hidden');
+  syncInterface();
 });
 $('reset').addEventListener('click',()=>{applyPreset('coast');setView('coast');$('foam').checked=true;uniforms.uFoam.value=1;toast('已恢复清澈浅海');});
 let toastTimeout;
@@ -168,31 +191,52 @@ $('capture').addEventListener('click',()=>{
   });
 });
 window.addEventListener('keydown',e=>{
-  if(['INPUT','SELECT','TEXTAREA','BUTTON'].includes(document.activeElement.tagName))return;
-  if(e.code==='Space'){e.preventDefault();togglePause();}
-  if(e.code==='KeyH')document.body.classList.toggle('ui-hidden');
+  if(['INPUT','SELECT','TEXTAREA'].includes(document.activeElement.tagName))return;
+  if(e.code==='Space'&&document.activeElement.tagName!=='BUTTON'){e.preventDefault();togglePause();}
+  if(e.code==='KeyH'){document.body.classList.toggle('ui-hidden');syncInterface();}
 });
-if(window.innerWidth<600){$('panel').classList.add('hidden');$('toggle-panel').setAttribute('aria-expanded','false');}
+if(window.innerWidth<600)$('panel').classList.add('hidden');
+syncInterface();
 let shaderError=false;
 renderer.debug.onShaderError=(gl,program,vertex,fragment)=>{
   shaderError=true;
   console.error('Shader error:',gl.getProgramInfoLog(program),gl.getShaderInfoLog(vertex),gl.getShaderInfoLog(fragment));
   $('loading').classList.remove('hide');
+  $('loading').setAttribute('aria-hidden','false');
   $('loading').innerHTML='<p>海面着色器未能启动</p><small>请使用支持 WebGL 2 的浏览器，并开启硬件加速。</small>';
 };
+function protectCamera(){
+  const height=surfaceHeightAt(camera.position.x,camera.position.z,uniforms.uTime.value,uniforms.uWave.value,uniforms.uDepth.value);
+  const minimum=Math.max(0.8,height+0.35);
+  if(camera.position.y<minimum){camera.position.y=minimum;camera.lookAt(controls.target);needsRender=true;}
+}
 function render(){
+  if(contextLost)return;
+  protectCamera();
   waveSpectrum.update();
   foamSimulation.update();
   caustics.render();
   renderer.setRenderTarget(null);
   renderer.setClearColor(0x90bbd2,1);
   renderer.render(scene,camera);
+  renderCount++;needsRender=false;
 }
+canvas.addEventListener('webglcontextlost',event=>{
+  event.preventDefault();contextLost=true;ready=false;
+  document.body.dataset.ready='false';$('loading').classList.remove('hide');
+  $('loading').setAttribute('aria-hidden','false');
+  $('loading').innerHTML='<p>正在恢复海面渲染</p><small>显卡连接暂时中断，请稍候。</small>';
+});
+canvas.addEventListener('webglcontextrestored',()=>{
+  contextLost=false;shaderError=false;
+  waveSpectrum.invalidate();foamSimulation.invalidate();caustics.invalidate();needsRender=true;
+  previous=performance.now();lastFps=previous;frames=0;
+});
 let previous=performance.now(),lastFps=previous,frames=0;
 function animate(now){
   requestAnimationFrame(animate);
-  const dt=Math.min((now-previous)/1000,0.05);previous=now;
-  if(document.hidden)return;
+  const dt=Math.min((now-previous)/1000,0.25);previous=now;
+  if(document.hidden||contextLost)return;
   if(!paused)uniforms.uTime.value+=dt*speed;
   if(transition){
     const t=Math.min(1,(now-transition.start)/1500),ease=t*t*(3-2*t);
@@ -201,20 +245,18 @@ function animate(now){
     if(t>=1)transition=null;
   }
   controls.update();
-  // Keep the camera above the crests, even at the minimum orbit distance.
-  camera.position.y=Math.max(camera.position.y,0.8);
-  render();
-  frames++;
-  if(now-lastFps>800){$('fps').textContent=Math.round(frames*1000/(now-lastFps));frames=0;lastFps=now;}
-  if(!ready&&!shaderError){ready=true;$('loading').classList.add('hide');document.body.dataset.ready='true';}
+  if(!paused||transition||needsRender){render();frames++;}
+  if(now-lastFps>800){$('fps').textContent=paused?'—':Math.round(frames*1000/(now-lastFps));frames=0;lastFps=now;}
+  if(!ready&&!shaderError){ready=true;$('loading').classList.add('hide');$('loading').setAttribute('aria-hidden','true');document.body.dataset.ready='true';}
 }
 requestAnimationFrame(animate);
+document.addEventListener('visibilitychange',()=>{previous=performance.now();lastFps=previous;frames=0;needsRender=true;});
 
 // Local diagnostics for reproducible browser checks and still captures.
 window.oceanDemo={
   renderer,scene,camera,controls,uniforms,foamSimulation,
   setView,setQuality,applyPreset,render,
-  getState:()=>({paused,quality,currentView,time:uniforms.uTime.value,shaderError,ready,triangles:renderer.info.render.triangles,caustics:caustics.getState(),foam:foamSimulation.getState()}),
+  getState:()=>({paused,quality,currentView,time:uniforms.uTime.value,shaderError,ready,contextLost,renderCount,triangles:renderer.info.render.triangles,caustics:caustics.getState(),foam:foamSimulation.getState()}),
   setTime(t){uniforms.uTime.value=t;render();},
   pause(){if(!paused)togglePause();}
 };

@@ -9,9 +9,12 @@ import * as THREE from 'three';
 const frame=document.querySelector('#demo'),status=document.querySelector('#status'),report=document.querySelector('#report');
 const ready=new Promise(resolve=>{const timer=setInterval(()=>{if(frame.contentWindow.oceanDemo?.getState().ready){clearInterval(timer);status.textContent='场景就绪';resolve(frame.contentWindow.oceanDemo);}},200);});
 const yieldUI=()=>new Promise(resolve=>setTimeout(resolve,0));
+let running=false;
 document.querySelector('#run').onclick=async()=>{
+ if(running)return;running=true;document.querySelector('#run').disabled=true;report.textContent='';
+ let app,cleanup=()=>{};
  try{
-  const app=await ready;app.pause();app.setView('coast',true);app.controls.enableDamping=false;
+  app=await ready;app.pause();app.setView('coast',true);app.controls.enableDamping=false;
   const canvas=app.renderer.domElement,box=frame.contentDocument.querySelector('#foam');
   const setFoam=v=>{if(box.checked!==v)box.click();};
   const pixels=()=>{app.render();const gl=app.renderer.getContext(),data=new Uint8Array(gl.drawingBufferWidth*gl.drawingBufferHeight*4);gl.readPixels(0,0,gl.drawingBufferWidth,gl.drawingBufferHeight,gl.RGBA,gl.UNSIGNED_BYTE,data);return data;};
@@ -33,6 +36,7 @@ document.querySelector('#run').onclick=async()=>{
   const target=new THREE.WebGLRenderTarget(128,128,{type:THREE.FloatType,depthBuffer:false});
   const material=new THREE.ShaderMaterial({uniforms:{map:app.uniforms.uFoamMap},vertexShader:'varying vec2 v;void main(){v=uv;gl_Position=vec4(position.xy,0.,1.);}',fragmentShader:'uniform sampler2D map;varying vec2 v;void main(){gl_FragColor=texture2D(map,v);}',depthTest:false,depthWrite:false});
   const scene=new THREE.Scene(),cam=new THREE.Camera(),geometry=new THREE.PlaneGeometry(2,2);
+  cleanup=()=>{target.dispose();material.dispose();geometry.dispose();};
   // The renderer lives in the iframe: its typed-array checks use that realm.
   for(const attribute of Object.values(geometry.attributes))attribute.array=new frame.contentWindow.Float32Array(attribute.array);
   geometry.index.array=new frame.contentWindow.Uint16Array(geometry.index.array);
@@ -44,7 +48,8 @@ document.querySelector('#run').onclick=async()=>{
   const lifetime=[density()];app.foamSimulation.setEmission(0);await advance(8.6,.5);lifetime.push(density());await advance(9.1,1.5);lifetime.push(density());app.foamSimulation.setEmission(1);
   const qualities=[];for(const quality of ['low','high','balanced']){app.setQuality(quality);app.render();qualities.push({quality,...app.foamSimulation.getState()});}
   const checks={visibleAtDefault:results[1].visiblePercent>.1,sparseStrongFoam:results[3].visiblePercent>results[1].visiblePercent&&results[3].visiblePercent<7,calmHasNoFoam:results[0].visiblePercent===0,toggleRestoresPixels:restores,pauseFreezesHistory:paused,persistsAfterEmissionStops:lifetime[1].total>0&&lifetime[1].total<lifetime[0].total,decaysWithTime:lifetime[2].total<lifetime[1].total*.5,noShaderError:!app.getState().shaderError};
-  report.textContent=JSON.stringify({passed:Object.values(checks).every(Boolean),checks,results,lifetime,qualities},null,2);status.textContent='检查完成';target.dispose();material.dispose();geometry.dispose();
+  report.textContent=JSON.stringify({passed:Object.values(checks).every(Boolean),checks,results,lifetime,qualities},null,2);status.textContent='检查完成';
  }catch(e){status.textContent='检查失败';report.textContent=e.stack;}
+ finally{app?.foamSimulation.setEmission(1);cleanup();running=false;document.querySelector('#run').disabled=false;}
 };
 </script></html>

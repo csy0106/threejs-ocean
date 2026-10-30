@@ -1,0 +1,47 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>焦散采样检查</title>
+<script type="importmap">{"imports":{"three":"/vendor/three.module.js"}}</script>
+<style>body{font:16px system-ui;background:#173440;color:white;margin:24px}button{padding:12px}iframe{width:1200px;height:800px;border:0}pre{white-space:pre-wrap}</style>
+<h1>焦散采样：平坦水面与运行时间</h1><button id="run">运行检查</button><p id="status">等待场景</p><pre id="report"></pre><iframe id="demo" src="/"></iframe>
+<script type="module">
+import * as THREE from 'three';
+const frame=document.querySelector('#demo'),status=document.querySelector('#status'),report=document.querySelector('#report');
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms));
+document.querySelector('#run').onclick=async()=>{
+ const button=document.querySelector('#run');button.disabled=true;let cleanup=()=>{},app;
+ try{
+  for(let i=0;i<150&&!frame.contentWindow.oceanDemo?.getState().ready;i++)await wait(200);
+  app=frame.contentWindow.oceanDemo;if(!app?.getState().ready)throw Error('Scene failed to start');
+  app.pause();app.controls.enableDamping=false;app.setView('shallow',true);app.applyPreset('coast');
+  const geometry=new THREE.PlaneGeometry(2,2),target=new THREE.WebGLRenderTarget(256,256,{type:THREE.FloatType,depthBuffer:false});
+  for(const attribute of Object.values(geometry.attributes))attribute.array=new frame.contentWindow.Float32Array(attribute.array);
+  geometry.index.array=new frame.contentWindow.Uint16Array(geometry.index.array);
+  const shader=new THREE.ShaderMaterial({uniforms:{map:app.uniforms.uCausticMap,rect:app.uniforms.uCausticNearRect},depthTest:false,depthWrite:false,
+   vertexShader:'varying vec2 v;void main(){v=uv;gl_Position=vec4(position.xy,0.,1.);}',
+   fragmentShader:'uniform sampler2D map;uniform vec4 rect;varying vec2 v;void main(){vec2 p=(v-.5)*8.+vec2(0.,4.);float c=texture2D(map,(p-rect.xy)/rect.zw+.5).r*4.;gl_FragColor=vec4(c,0.,0.,1.);}'});
+  cleanup=()=>{geometry.dispose();shader.dispose();target.dispose();};
+  const scene=new THREE.Scene(),camera=new THREE.Camera();scene.add(new THREE.Mesh(geometry,shader));
+  const checks=[],flat=[];
+  for(const quality of ['low','balanced','high']){
+   status.textContent='平坦水面 '+quality;app.setQuality(quality);app.uniforms.uWave.value=0;app.setTime(8);
+   app.renderer.setRenderTarget(target);app.renderer.render(scene,camera);
+   const values=new Float32Array(256*256*4);app.renderer.readRenderTargetPixels(target,0,0,256,256,values);app.renderer.setRenderTarget(null);
+   let sum=0,square=0,min=Infinity,max=-Infinity,invalid=0;
+   for(let i=0;i<values.length;i+=4){const v=values[i];sum+=v;square+=v*v;min=Math.min(min,v);max=Math.max(max,v);if(!Number.isFinite(v))invalid++;}
+   const mean=sum/(256*256),coefficientOfVariation=Math.sqrt(Math.max(0,square/(256*256)-mean*mean))/mean;
+   flat.push({quality,mean,min,max,coefficientOfVariation,invalid});
+   checks.push({name:quality+' flat water has no holes, excessive energy or grid pattern',passed:invalid===0&&min>.5&&max<1.75&&coefficientOfVariation<.06});await wait(0);
+  }
+  checks.push({name:'Quality changes preserve average unfocused light',passed:Math.max(...flat.map(x=>x.mean))/Math.min(...flat.map(x=>x.mean))<1.05});
+  app.setQuality('balanced');app.applyPreset('coast');app.setTime(8);const gl=app.renderer.getContext(),frameTimes=[];
+  // Synchronous timings include GPU completion; these are local measurements,
+  // not a portable FPS guarantee. Warm up before taking the median.
+  status.textContent='检查动态光照';
+  for(let i=0;i<45;i++){gl.finish();const start=performance.now();app.setTime(8+(i+1)/60);gl.finish();if(i>=5)frameTimes.push(performance.now()-start);await wait(0);}
+  const sorted=frameTimes.slice().sort((a,b)=>a-b);
+  checks.push({name:'Animated caustics compile and render without GL errors',passed:gl.getError()===0&&!app.getState().shaderError});
+  const result={passed:checks.every(x=>x.passed),checks,flat,frameTimeMs:{median:sorted[Math.floor(sorted.length/2)],p95:sorted[Math.floor(sorted.length*.95)],samples:sorted.length},pointSizeLimit:gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1]};
+  report.textContent=JSON.stringify(result,null,2);status.textContent='检查完成';
+ }catch(e){report.textContent=JSON.stringify({passed:false,error:e.stack});status.textContent='检查失败';}
+ finally{cleanup();if(app){app.applyPreset('coast');app.render();}button.disabled=false;}
+};
+</script></html>

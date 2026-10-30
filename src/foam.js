@@ -41,9 +41,14 @@ void main(){
     +tileNoise(vUv*vec2(80,224),vec2(80,224))*0.35;
   float source=smoothstep(0.16,0.36,compression)*smoothstep(0.16,0.42,swell.w*uWave);
   source*=ridge*smoothstep(0.32,0.76,patches)*smoothstep(0.28,1.08,uWave)*rising*uEmission;
-  float fresh=transported.r*exp(-uDelta*2.4);
-  float residue=transported.g*exp(-uDelta*1.05)+transported.r*(1.0-exp(-uDelta*2.4))*0.45;
-  fresh=1.0-(1.0-fresh)*exp(-source*uDelta*7.0);
+  // Integrate constant emission and both decay stages analytically. This avoids
+  // truncating foam time when a slow frame advances the wave field by > 0.1 s.
+  float production=source*7.0,rate=2.4+production,equilibrium=production/rate;
+  float freshDecay=exp(-uDelta*rate),residueDecay=exp(-uDelta*1.05);
+  float fresh=equilibrium+(transported.r-equilibrium)*freshDecay;
+  float residue=transported.g*residueDecay+0.45*2.4*(
+    equilibrium*(1.0-residueDecay)/1.05
+    +(transported.r-equilibrium)*(residueDecay-freshDecay)/(rate-1.05));
   if(uReset>0.5){fresh=source*0.35;residue=0.0;}
   gl_FragColor=vec4(clamp(vec2(fresh,residue),0.0,1.0),compression,1.0);
 }
@@ -61,6 +66,7 @@ export function createFoamSimulation(renderer,uniforms){
   uniforms.uFoamMap={value:null};
   let targets=[],read=0,lastTime=NaN,lastWave=NaN,updates=0;
   return {
+    invalidate(){lastTime=NaN;},
     setQuality(level){
       for(const t of targets)t.dispose();
       const size=level==='high'?1024:level==='low'?512:768;
@@ -75,8 +81,8 @@ export function createFoamSimulation(renderer,uniforms){
       const time=uniforms.uTime.value,wave=uniforms.uWave.value;
       if(time===lastTime&&wave===lastWave)return;
       const elapsed=time-lastTime;
-      const reset=!Number.isFinite(lastTime)||elapsed<0||elapsed>0.25||wave!==lastWave;
-      material.uniforms.uDelta.value=reset?0:Math.min(0.1,elapsed);
+      const reset=!Number.isFinite(lastTime)||elapsed<0||elapsed>1.0||wave!==lastWave;
+      material.uniforms.uDelta.value=reset?0:elapsed;
       material.uniforms.uReset.value=reset?1:0;
       material.uniforms.uHistory.value=reset?empty:targets[read].texture;
       const write=1-read;

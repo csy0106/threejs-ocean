@@ -4,31 +4,31 @@ import { causticVertex, causticFragment } from './shaders.js';
 // Camera-fitted caustic cascades. Rectangles move in WORLD space: changing the
 // camera changes the sampled area, never the wavelengths or phase of the light.
 function rayGrid(segments) {
-  const geometry=new THREE.PlaneGeometry(1,1,segments,segments);
-  const positions=geometry.attributes.position;
-  for(let row=1;row<segments;row++)for(let column=1;column<segments;column++){
-    const index=row*(segments+1)+column;
-    const jitter=Math.sin(row*127.1+column*311.7)*43758.5453;
-    positions.setX(index,positions.getX(index)+((row%2)*0.44+(jitter-Math.floor(jitter)-0.5)*0.18)/segments);
+  const geometry=new THREE.BufferGeometry(),positions=new Float32Array(segments*segments*3);
+  for(let row=0;row<segments;row++)for(let column=0;column<segments;column++){
+    const index=(row*segments+column)*3;
+    positions[index]=(column+0.5)/segments-0.5;positions[index+1]=(row+0.5)/segments-0.5;
   }
+  geometry.setAttribute('position',new THREE.BufferAttribute(positions,3));
   return geometry;
 }
 
 export function createAdaptiveCaustics(renderer,camera,uniforms) {
   const scene=new THREE.Scene(),lightCamera=new THREE.Camera();
+  const gl=renderer.getContext(),pointSizeLimit=gl.getParameter(gl.ALIASED_POINT_SIZE_RANGE)[1];
   const material=new THREE.ShaderMaterial({
     vertexShader:causticVertex,fragmentShader:causticFragment,
-    uniforms:{...uniforms,uCausticTargetRect:{value:new THREE.Vector4()},uCausticSourceRect:{value:new THREE.Vector4()},uCausticFootprint:{value:0.065},uCausticSmoothFlux:{value:0.25}},
+    uniforms:{...uniforms,uCausticTargetRect:{value:new THREE.Vector4()},uCausticSourceRect:{value:new THREE.Vector4()},uCausticFootprint:{value:0.065},uCausticGrid:{value:600},uCausticResolution:{value:1536},uPointSizeLimit:{value:pointSizeLimit}},
     side:THREE.DoubleSide,depthTest:false,depthWrite:false,transparent:true,
     blending:THREE.AdditiveBlending,toneMapped:false
   });
-  const mesh=new THREE.Mesh(undefined,material);mesh.frustumCulled=false;scene.add(mesh);
+  const mesh=new THREE.Points(undefined,material);mesh.frustumCulled=false;scene.add(mesh);
   const cascades=[{name:'near',rect:new THREE.Vector4(0,0,32,32)},{name:'far',rect:new THREE.Vector4(0,0,128,128)}];
   uniforms.uCausticNearRect={value:cascades[0].rect};
   uniforms.uCausticFarRect={value:cascades[1].rect};
   uniforms.uCausticFarMap={value:null};
   const ray=new THREE.Vector3(),screenSize=new THREE.Vector2();
-  let maximumDistance=200;
+  let maximumDistance=200,lastState='',updates=0;
 
   function depth(x,z){return Math.max(0.28,uniforms.uDepth.value+0.17*(5-z)+0.09*Math.sin(x*.42+z*.23)+0.06*Math.sin(z*.61-x*.17));}
 
@@ -73,7 +73,9 @@ export function createAdaptiveCaustics(renderer,camera,uniforms) {
   }
 
   return {
+    invalidate(){lastState='';},
     setQuality(q){
+      lastState='';
       for(let i=0;i<cascades.length;i++){
         const cascade=cascades[i];
         cascade.target?.dispose();cascade.geometry?.dispose();
@@ -92,22 +94,26 @@ export function createAdaptiveCaustics(renderer,camera,uniforms) {
     render(){
       camera.updateMatrixWorld();
       renderer.getDrawingBufferSize(screenSize);
+      const state=[uniforms.uTime.value,uniforms.uWave.value,uniforms.uDepth.value,
+        ...uniforms.uSun.value.toArray(),...camera.matrixWorld.elements,
+        ...camera.projectionMatrix.elements,screenSize.x,screenSize.y].join(',');
+      if(state===lastState)return;
+      lastState=state;updates++;
       maximumDistance=Math.max(120,Math.min(360,screenSize.y*.24/(2*Math.tan(THREE.MathUtils.degToRad(camera.getEffectiveFOV()/2)))));
       for(let i=0;i<cascades.length;i++){
         const cascade=cascades[i];fit(cascade,i);
         material.uniforms.uCausticTargetRect.value.copy(cascade.rect);
         material.uniforms.uCausticSourceRect.value.copy(cascade.source);
         material.uniforms.uCausticFootprint.value=cascade.footprint;
-        // Distant light already has mip filtering; reserve the four extra
-        // differential ray traces for the fine foreground cascade.
-        material.uniforms.uCausticSmoothFlux.value=i===0?0.25:0;
+        material.uniforms.uCausticGrid.value=cascade.segments;
+        material.uniforms.uCausticResolution.value=cascade.resolution;
         mesh.geometry=cascade.geometry;
         renderer.setRenderTarget(cascade.target);
         renderer.setClearColor(0x000000,0);renderer.clear();
         renderer.render(scene,lightCamera);
       }
     },
-    getState(){return {maximumDistance,cascades:cascades.map(c=>({name:c.name,rect:c.rect.toArray(),source:c.source.toArray(),footprint:c.footprint,resolution:c.resolution}))};},
+    getState(){return {updates,maximumDistance,cascades:cascades.map(c=>({name:c.name,rect:c.rect.toArray(),source:c.source.toArray(),footprint:c.footprint,resolution:c.resolution}))};},
     dispose(){for(const c of cascades){c.geometry.dispose();c.target.dispose();}material.dispose();}
   };
 }

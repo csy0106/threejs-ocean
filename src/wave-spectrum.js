@@ -1,37 +1,10 @@
 import * as THREE from 'three';
+import {SPECTRA} from './wave-model.js';
 
 // A deterministic random spectrum, evaluated on the GPU once per frame.
 // Integer wave vectors make both the height and its derivatives tile seamlessly.
 // The two incommensurate patch sizes keep the combined pattern from repeating
 // within the visible nearshore area.
-const COUNT = 48;
-function randomGenerator(seed) {
-  return () => {
-    seed |= 0; seed = seed + 0x6D2B79F5 | 0;
-    let t = Math.imul(seed ^ seed >>> 15, 1 | seed);
-    t ^= t + Math.imul(t ^ t >>> 7, 61 | t);
-    return ((t ^ t >>> 14) >>> 0) / 4294967296;
-  };
-}
-function spectrum(size, minLength, maxLength, seed, detail) {
-  const random = randomGenerator(seed), modes = [], frequencies = [], seen = new Set();
-  for (let i = 0; i < COUNT; i++) {
-    const fraction = (i + random()) / COUNT;
-    const wavelength = minLength * (maxLength / minLength) ** fraction;
-    // Swell has a prevailing wind; small ripples have a broader angular spread.
-    const angle = detail ? random() * Math.PI * 2 : 1.18 + (random() + random() + random() - 1.5) * 0.9;
-    let nx = Math.round(Math.cos(angle) * size / wavelength);
-    let nz = Math.round(Math.sin(angle) * size / wavelength);
-    while (seen.has(`${nx},${nz}`) || (!nx && !nz)) nz++;
-    seen.add(`${nx},${nz}`);
-    const kx = 2 * Math.PI * nx / size, kz = 2 * Math.PI * nz / size;
-    const k = Math.hypot(kx,kz), length = 2*Math.PI/k;
-    const amplitude = (detail ? 0.0048 : 0.010) * length ** (detail ? 1.14 : 0.92) * (0.65 + random() * 0.7);
-    modes.push(new THREE.Vector4(kx,kz,amplitude,random()*Math.PI*2));
-    frequencies.push(Math.sqrt(9.81*k) * (detail ? 0.86 : 1));
-  }
-  return {modes,frequencies};
-}
 
 const vertexShader = /* glsl */`
 varying vec2 vUv;
@@ -92,11 +65,8 @@ export function createWaveSpectrum(renderer, sharedUniforms) {
   const scene=new THREE.Scene(),camera=new THREE.Camera();
   const geometry=new THREE.PlaneGeometry(2,2);
   const mesh=new THREE.Mesh(geometry);mesh.frustumCulled=false;scene.add(mesh);
-  const layers=[
-    {size:64,detail:false,min:0.95,max:14.5,seed:92117,resolution:512},
-    {size:11.7,detail:true,min:0.19,max:1.65,seed:58221,resolution:512}
-  ].map(config=>{
-    const values=spectrum(config.size,config.min,config.max,config.seed,config.detail);
+  const layers=SPECTRA.map(config=>{
+    const values={modes:config.modes.map(mode=>new THREE.Vector4(...mode)),frequencies:config.frequencies};
     const material=new THREE.ShaderMaterial({vertexShader,fragmentShader,glslVersion:THREE.GLSL3,
       uniforms:{uTime:sharedUniforms.uTime,uSize:{value:config.size},uDetail:{value:config.detail?1:0},uModes:{value:values.modes},uFrequencies:{value:values.frequencies}},
       depthTest:false,depthWrite:false,toneMapped:false});
@@ -113,6 +83,7 @@ export function createWaveSpectrum(renderer, sharedUniforms) {
   sharedUniforms.uJacobianMap={value:layers[0].target.textures[2]};
   let lastTime=NaN;
   return {
+    invalidate(){lastTime=NaN;},
     update(){
       if(lastTime===sharedUniforms.uTime.value)return;
       lastTime=sharedUniforms.uTime.value;
